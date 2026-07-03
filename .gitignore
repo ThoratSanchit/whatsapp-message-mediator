@@ -1,0 +1,17 @@
+# Dependency directories
+node_modules/
+
+# Compiled output
+dist/
+
+# WhatsApp session and credentials (VERY IMPORTANT: Do not commit private keys)
+session/
+
+# Logs
+logs/
+
+# Local databases
+*.db
+
+# Environment variables containing sensitive passwords
+.env
