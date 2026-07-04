@@ -28,7 +28,7 @@ async function bootstrap() {
   };
 
   // Instantiate handlers & event listeners
-  const messageHandler = new MessageHandler(groupCache, socketProvider);
+  const messageHandler = new MessageHandler(groupCache, socketProvider, dbService);
   const listener = new WhatsAppListener(messageHandler);
 
   // Instantiate main client connection manager

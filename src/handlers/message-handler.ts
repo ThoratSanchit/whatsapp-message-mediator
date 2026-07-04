@@ -1,6 +1,7 @@
 import { WASocket } from '@whiskeysockets/baileys';
 import { IMessageHandler, NormalizedMessage } from '../types/index.js';
 import { GroupCache } from '../services/whatsapp/group-cache.js';
+import { DatabaseService } from '../services/database/index.js';
 import { logger } from '../logger/index.js';
 import { config } from '../config/index.js';
 
@@ -8,6 +9,7 @@ export class MessageHandler implements IMessageHandler {
   constructor(
     private groupCache: GroupCache,
     private sockProvider: { getSock(): WASocket | null },
+    private dbService: DatabaseService,
   ) {}
 
   /**
@@ -48,6 +50,34 @@ export class MessageHandler implements IMessageHandler {
           );
           return;
         }
+      }
+
+      // 3. Save message to queue table temp_pending_messages
+      const insertMsgQuery = `
+        INSERT INTO temp_pending_messages (
+          message_id, sender_jid, sender_name, group_jid, group_name, message_text, timestamp, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+        ON CONFLICT (message_id) DO NOTHING;
+      `;
+      await this.dbService.query(insertMsgQuery, [
+        message.id,
+        message.senderJid,
+        message.senderName,
+        message.groupJid,
+        groupDisplay,
+        message.content,
+        message.timestamp,
+      ]);
+      logger.debug({ messageId: message.id }, 'Message successfully queued in database.');
+
+      // 4. Auto-create pump in temp_cng_pump if groupJid is not registered yet (fallback logic)
+      if (message.isGroup && message.groupJid) {
+        const insertPumpQuery = `
+          INSERT INTO temp_cng_pump (pump_name, display_name, group_jid, is_cng_available)
+          VALUES ($1, $2, $3, false)
+          ON CONFLICT (group_jid) DO NOTHING;
+        `;
+        await this.dbService.query(insertPumpQuery, [groupDisplay, groupDisplay, message.groupJid]);
       }
 
       // Format Timestamp (YYYY-MM-DD HH:mm:ss)

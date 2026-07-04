@@ -60,6 +60,8 @@ export class DatabaseService {
       CREATE TABLE IF NOT EXISTS temp_cng_pump (
         id SERIAL PRIMARY KEY,
         pump_name VARCHAR(255) NOT NULL,
+        display_name VARCHAR(255),
+        group_jid VARCHAR(255) UNIQUE,
         last_updated TIMESTAMP WITH TIME ZONE,
         note TEXT,
         owner_name VARCHAR(255),
@@ -71,18 +73,38 @@ export class DatabaseService {
     `;
 
     const alterQuery = `
-      ALTER TABLE temp_cng_pump 
-      ADD COLUMN IF NOT EXISTS is_cng_available BOOLEAN DEFAULT FALSE;
+      ALTER TABLE temp_cng_pump ADD COLUMN IF NOT EXISTS is_cng_available BOOLEAN DEFAULT FALSE;
+      ALTER TABLE temp_cng_pump ADD COLUMN IF NOT EXISTS display_name VARCHAR(255);
+      ALTER TABLE temp_cng_pump ADD COLUMN IF NOT EXISTS group_jid VARCHAR(255) UNIQUE;
+    `;
+
+    const createQueueTableQuery = `
+      CREATE TABLE IF NOT EXISTS temp_pending_messages (
+        id SERIAL PRIMARY KEY,
+        message_id VARCHAR(255) NOT NULL UNIQUE,
+        sender_jid VARCHAR(255) NOT NULL,
+        sender_name VARCHAR(255) NOT NULL,
+        group_jid VARCHAR(255),
+        group_name VARCHAR(255),
+        message_text TEXT NOT NULL,
+        timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        created_on TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_on TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
     `;
 
     try {
       logger.debug('Running DDL query to initialize temp_cng_pump table if not exists...');
       await this.pool.query(createQuery);
-      
+
       logger.debug('Running DDL query to ensure is_cng_available column exists...');
       await this.pool.query(alterQuery);
-      
-      logger.info('Database table temp_cng_pump verified/initialized successfully.');
+
+      logger.debug('Running DDL query to initialize temp_pending_messages queue table...');
+      await this.pool.query(createQueueTableQuery);
+
+      logger.info('Database tables verified/initialized successfully.');
     } catch (err: unknown) {
       errorHandler.handleError(err, { context: 'Database table creation/alteration' });
     }
