@@ -1,132 +1,80 @@
-import pg from 'pg';
+import { Sequelize } from 'sequelize';
 import { config } from '../../config/index.js';
 import { logger } from '../../logger/index.js';
-import { ConnectionError } from '../../errors/app-error.js';
 import { errorHandler } from '../../errors/error-handler.js';
-
-const { Pool } = pg;
+import pg from 'pg';
+import { initStationModel } from './models/station-model.js';
+import { initPendingMessageModel, PendingMessage } from './models/pending-message-model.js';
 
 export class DatabaseService {
-  private pool: pg.Pool;
+  private sequelize: Sequelize;
 
   constructor() {
     const isRDS = config.DB_HOST.includes('rds.amazonaws.com');
-    // Enable SSL for RDS databases automatically (common for AWS RDS)
     const ssl = isRDS ? { rejectUnauthorized: false } : undefined;
 
-    this.pool = new Pool({
+    this.sequelize = new Sequelize(config.DB_NAME, config.DB_USER, config.DB_PASSWORD, {
       host: config.DB_HOST,
-      user: config.DB_USER,
-      password: config.DB_PASSWORD,
-      database: config.DB_NAME,
       port: config.DB_PORT,
-      ssl,
-      // Standard production pool settings
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
+      dialect: 'postgres',
+      dialectModule: pg,
+      logging: (msg) => logger.debug(msg),
+      dialectOptions: ssl
+        ? {
+            ssl: {
+              require: true,
+              rejectUnauthorized: false,
+            },
+          }
+        : undefined,
+      pool: {
+        max: 10,
+        min: 2,
+        acquire: 30000,
+        idle: 10000,
+      },
     });
   }
 
   /**
-   * Initializes the database connection pool and sets up the temp_cng_pump table.
-   * Ensures no DROP/DELETE commands are run.
+   * Initializes the database connection pool and registers models.
    */
   public async initialize(): Promise<void> {
-    logger.info('Connecting to PostgreSQL database...');
+    logger.info('Connecting to PostgreSQL database using Sequelize ORM...');
     try {
-      // Test connection
-      const client = await this.pool.connect();
-      logger.info('Successfully connected to PostgreSQL database.');
-      client.release();
+      await this.sequelize.authenticate();
+      logger.info('Successfully connected to PostgreSQL database via Sequelize.');
 
-      // Initialize table structure
-      await this.createTable();
+      // Initialize models
+      initStationModel(this.sequelize);
+      initPendingMessageModel(this.sequelize);
+
+      // Only sync the pending messages queue table (does not touch or sync the stations table)
+      await PendingMessage.sync();
+      logger.info('Database queue table temp_pending_messages verified.');
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      throw new ConnectionError(`PostgreSQL connection failed: ${errMsg}`, {
-        host: config.DB_HOST,
-        database: config.DB_NAME,
-      });
+      throw new Error(`Sequelize database initialization failed: ${errMsg}`, { cause: err });
     }
   }
 
   /**
-   * Creates the temp_cng_pump table if it does not already exist.
-   * Under no circumstances should this drop or truncate any tables.
+   * Retrieves the raw Sequelize instance.
    */
-  private async createTable(): Promise<void> {
-    const createQuery = `
-      CREATE TABLE IF NOT EXISTS temp_cng_pump (
-        id SERIAL PRIMARY KEY,
-        pump_name VARCHAR(255) NOT NULL,
-        display_name VARCHAR(255),
-        group_jid VARCHAR(255) UNIQUE,
-        last_updated TIMESTAMP WITH TIME ZONE,
-        note TEXT,
-        owner_name VARCHAR(255),
-        price NUMERIC(10, 2),
-        is_cng_available BOOLEAN DEFAULT FALSE,
-        created_on TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_on TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-    `;
-
-    const alterQuery = `
-      ALTER TABLE temp_cng_pump ADD COLUMN IF NOT EXISTS is_cng_available BOOLEAN DEFAULT FALSE;
-      ALTER TABLE temp_cng_pump ADD COLUMN IF NOT EXISTS display_name VARCHAR(255);
-      ALTER TABLE temp_cng_pump ADD COLUMN IF NOT EXISTS group_jid VARCHAR(255) UNIQUE;
-    `;
-
-    const createQueueTableQuery = `
-      CREATE TABLE IF NOT EXISTS temp_pending_messages (
-        id SERIAL PRIMARY KEY,
-        message_id VARCHAR(255) NOT NULL UNIQUE,
-        sender_jid VARCHAR(255) NOT NULL,
-        sender_name VARCHAR(255) NOT NULL,
-        group_jid VARCHAR(255),
-        group_name VARCHAR(255),
-        message_text TEXT NOT NULL,
-        timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-        status VARCHAR(50) DEFAULT 'pending',
-        created_on TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_on TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-    `;
-
-    try {
-      logger.debug('Running DDL query to initialize temp_cng_pump table if not exists...');
-      await this.pool.query(createQuery);
-
-      logger.debug('Running DDL query to ensure is_cng_available column exists...');
-      await this.pool.query(alterQuery);
-
-      logger.debug('Running DDL query to initialize temp_pending_messages queue table...');
-      await this.pool.query(createQueueTableQuery);
-
-      logger.info('Database tables verified/initialized successfully.');
-    } catch (err: unknown) {
-      errorHandler.handleError(err, { context: 'Database table creation/alteration' });
-    }
+  public getSequelize(): Sequelize {
+    return this.sequelize;
   }
 
   /**
-   * Executes a database query.
-   */
-  public async query(text: string, params?: unknown[]): Promise<pg.QueryResult> {
-    return this.pool.query(text, params);
-  }
-
-  /**
-   * Closes the connection pool gracefully on application shutdown.
+   * Closes the Sequelize pool gracefully on application shutdown.
    */
   public async shutdown(): Promise<void> {
-    logger.info('Shutting down PostgreSQL database connection pool...');
+    logger.info('Shutting down PostgreSQL database Sequelize connection pool...');
     try {
-      await this.pool.end();
-      logger.info('PostgreSQL database connection pool closed.');
+      await this.sequelize.close();
+      logger.info('PostgreSQL database Sequelize connection pool closed.');
     } catch (err: unknown) {
-      logger.error({ err }, 'Error occurred closing PostgreSQL connection pool.');
+      errorHandler.handleError(err, { context: 'Sequelize pool shutdown' });
     }
   }
 }

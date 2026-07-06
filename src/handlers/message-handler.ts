@@ -1,7 +1,9 @@
 import { WASocket } from '@whiskeysockets/baileys';
+import { Op } from 'sequelize';
 import { IMessageHandler, NormalizedMessage } from '../types/index.js';
 import { GroupCache } from '../services/whatsapp/group-cache.js';
-import { DatabaseService } from '../services/database/index.js';
+import { Station } from '../services/database/models/station-model.js';
+import { PendingMessage } from '../services/database/models/pending-message-model.js';
 import { logger } from '../logger/index.js';
 import { config } from '../config/index.js';
 
@@ -9,7 +11,6 @@ export class MessageHandler implements IMessageHandler {
   constructor(
     private groupCache: GroupCache,
     private sockProvider: { getSock(): WASocket | null },
-    private dbService: DatabaseService,
   ) {}
 
   /**
@@ -52,33 +53,65 @@ export class MessageHandler implements IMessageHandler {
         }
       }
 
-      // 3. Save message to queue table temp_pending_messages
-      const insertMsgQuery = `
-        INSERT INTO temp_pending_messages (
-          message_id, sender_jid, sender_name, group_jid, group_name, message_text, timestamp, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
-        ON CONFLICT (message_id) DO NOTHING;
-      `;
-      await this.dbService.query(insertMsgQuery, [
-        message.id,
-        message.senderJid,
-        message.senderName,
-        message.groupJid,
-        groupDisplay,
-        message.content,
-        message.timestamp,
-      ]);
-      logger.debug({ messageId: message.id }, 'Message successfully queued in database.');
-
-      // 4. Auto-create pump in temp_cng_pump if groupJid is not registered yet (fallback logic)
+      // 3. Match incoming group name against registered stations in the database
+      let matchedStationId: string | null = null;
       if (message.isGroup && message.groupJid) {
-        const insertPumpQuery = `
-          INSERT INTO temp_cng_pump (pump_name, display_name, group_jid, is_cng_available)
-          VALUES ($1, $2, $3, false)
-          ON CONFLICT (group_jid) DO NOTHING;
-        `;
-        await this.dbService.query(insertPumpQuery, [groupDisplay, groupDisplay, message.groupJid]);
+        try {
+          const matchedStation = await Station.findOne({
+            where: {
+              [Op.or]: [
+                { group_jid: message.groupJid },
+                { station_name: groupDisplay },
+                { display_name: groupDisplay },
+              ],
+            },
+          });
+
+          if (matchedStation) {
+            matchedStationId = matchedStation.id;
+            logger.debug(
+              { groupJid: message.groupJid, stationId: matchedStationId },
+              'Matched incoming group message to registered station record.',
+            );
+
+            // Automatically associate the group JID if it wasn't saved yet (Self-Healing)
+            if (!matchedStation.group_jid) {
+              matchedStation.group_jid = message.groupJid;
+              await matchedStation.save();
+              logger.info(
+                { stationId: matchedStation.id, groupJid: message.groupJid },
+                'Automatically associated group_jid to station record.',
+              );
+            }
+          } else {
+            logger.warn(
+              { groupDisplay, groupJid: message.groupJid },
+              'No registered station found matching this WhatsApp group name/JID in the database.',
+            );
+          }
+        } catch (err: unknown) {
+          logger.error({ err }, 'Failed to lookup matching station in database.');
+        }
       }
+
+      // 4. Save message to queue table temp_pending_messages using Sequelize
+      await PendingMessage.findOrCreate({
+        where: { message_id: message.id },
+        defaults: {
+          station_id: matchedStationId,
+          sender_jid: message.senderJid,
+          sender_name: message.senderName,
+          group_jid: message.groupJid || null,
+          group_name: groupDisplay,
+          message_text: message.content,
+          timestamp: message.timestamp,
+          status: 'pending',
+        },
+      });
+      logger.debug(
+        { messageId: message.id, stationId: matchedStationId },
+        'Message successfully queued in database via ORM.',
+      );
 
       // Format Timestamp (YYYY-MM-DD HH:mm:ss)
       const timestampStr = message.timestamp.toISOString().replace('T', ' ').substring(0, 19);
