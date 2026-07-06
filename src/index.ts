@@ -4,6 +4,7 @@ import { MessageHandler } from './handlers/message-handler.js';
 import { WhatsAppListener } from './services/whatsapp/listener.js';
 import { WhatsAppClient } from './services/whatsapp/client.js';
 import { DatabaseService } from './services/database/index.js';
+import { QueueWorker } from './services/queue/queue-worker.js';
 import { errorHandler } from './errors/error-handler.js';
 
 async function bootstrap() {
@@ -35,10 +36,15 @@ async function bootstrap() {
   // Instantiate main client connection manager
   client = new WhatsAppClient(listener);
 
+  // Instantiate and start the queue worker
+  const queueWorker = new QueueWorker();
+  queueWorker.start();
+
   // Define shutdown hook
   const handleShutdown = async (signal: string) => {
     logger.info(`Received signal: ${signal}. Initiating graceful shutdown...`);
     try {
+      queueWorker.stop();
       await client.shutdown();
       await dbService.shutdown();
       logger.info('Graceful shutdown finished. Exiting process.');

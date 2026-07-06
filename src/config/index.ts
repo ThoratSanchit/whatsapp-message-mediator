@@ -25,6 +25,12 @@ const configSchema = z.object({
     .optional()
     .default('5432')
     .transform((val) => parseInt(val, 10)),
+  GEMINI_API_KEY: z.string(),
+  QUEUE_POLL_INTERVAL_MS: z
+    .string()
+    .optional()
+    .default('5000')
+    .transform((val) => parseInt(val, 10)),
 });
 
 // Safely parse process.env

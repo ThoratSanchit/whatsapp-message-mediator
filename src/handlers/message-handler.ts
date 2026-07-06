@@ -48,12 +48,12 @@ export class MessageHandler implements IMessageHandler {
 
       this.allowedGroupsCache = newCache;
       this.lastCacheUpdate = Date.now();
-      const pumpNames = stations.map(s => s.station_name || s.display_name).filter(Boolean);
+      const pumpNames = stations.map((s) => s.station_name || s.display_name).filter(Boolean);
       logger.info(
-        { 
+        {
           pumpCount: stations.length,
           cachedPumps: pumpNames,
-          cacheKeyCount: this.allowedGroupsCache.size 
+          cacheKeyCount: this.allowedGroupsCache.size,
         },
         'In-memory allowed groups cache updated from database.',
       );
@@ -102,7 +102,7 @@ export class MessageHandler implements IMessageHandler {
           );
         });
 
-      const isAllowed = isAllowedByDbCache || isAllowedByEnv || allowedGroups.length === 0;
+      const isAllowed = isAllowedByDbCache || isAllowedByEnv;
 
       if (!isAllowed) {
         logger.debug(
