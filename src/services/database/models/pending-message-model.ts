@@ -1,18 +1,18 @@
 import { DataTypes, Model, Sequelize } from 'sequelize';
 
 export class PendingMessage extends Model {
-  public id!: number;
-  public station_id!: string | null;
-  public message_id!: string;
-  public sender_jid!: string;
-  public sender_name!: string;
-  public group_jid!: string | null;
-  public group_name!: string | null;
-  public message_text!: string;
-  public timestamp!: Date;
-  public status!: string;
-  public readonly created_on!: Date;
-  public readonly updated_on!: Date;
+  declare id: number;
+  declare station_id: string | null;
+  declare message_id: string;
+  declare sender_jid: string;
+  declare sender_name: string;
+  declare group_jid: string | null;
+  declare group_name: string | null;
+  declare message_text: string;
+  declare timestamp: Date;
+  declare status: string;
+  declare readonly created_on: Date;
+  declare readonly updated_on: Date;
 }
 
 export function initPendingMessageModel(sequelize: Sequelize): void {

@@ -1,23 +1,23 @@
 import { DataTypes, Model, Sequelize } from 'sequelize';
 
 export class Station extends Model {
-  public id!: string;
-  public station_name!: string;
-  public display_name!: string | null;
-  public group_jid!: string | null;
-  public owner_name!: string | null;
-  public contact_number!: string | null;
-  public address!: string | null;
-  public latitude!: number | null;
-  public longitude!: number | null;
-  public status!: string;
-  public is_cng_available!: boolean;
-  public price!: number | null;
-  public note!: string | null;
-  public last_updated!: Date | null;
-  public created_by!: string | null;
-  public readonly created_at!: Date;
-  public readonly updated_at!: Date;
+  declare id: string;
+  declare station_name: string;
+  declare display_name: string | null;
+  declare group_jid: string | null;
+  declare owner_name: string | null;
+  declare contact_number: string | null;
+  declare address: string | null;
+  declare latitude: number | null;
+  declare longitude: number | null;
+  declare status: string;
+  declare is_cng_available: boolean;
+  declare price: number | null;
+  declare note: string | null;
+  declare last_updated: Date | null;
+  declare created_by: string | null;
+  declare readonly created_at: Date;
+  declare readonly updated_at: Date;
 }
 
 export function initStationModel(sequelize: Sequelize): void {

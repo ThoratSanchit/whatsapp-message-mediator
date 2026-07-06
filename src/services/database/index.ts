@@ -18,7 +18,7 @@ export class DatabaseService {
       port: config.DB_PORT,
       dialect: 'postgres',
       dialectModule: pg,
-      logging: (msg) => logger.debug(msg),
+      logging: false,
       dialectOptions: ssl
         ? {
             ssl: {
@@ -50,7 +50,7 @@ export class DatabaseService {
       initPendingMessageModel(this.sequelize);
 
       // Only sync the pending messages queue table (does not touch or sync the stations table)
-      await PendingMessage.sync();
+      await PendingMessage.sync({ alter: true });
       logger.info('Database queue table temp_pending_messages verified.');
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);

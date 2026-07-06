@@ -8,10 +8,59 @@ import { logger } from '../logger/index.js';
 import { config } from '../config/index.js';
 
 export class MessageHandler implements IMessageHandler {
+  private allowedGroupsCache: Set<string> = new Set();
+  private lastCacheUpdate: number = 0;
+  private cacheTTL = 5 * 60 * 1000; // 5 minutes cache TTL
+
   constructor(
     private groupCache: GroupCache,
     private sockProvider: { getSock(): WASocket | null },
   ) {}
+
+  /**
+   * Initializes the handler by pre-loading the allowed groups cache.
+   */
+  public async initialize(): Promise<void> {
+    await this.updateAllowedGroupsCache();
+  }
+
+  /**
+   * Updates the in-memory cache of allowed group names and JIDs from the stations table.
+   */
+  private async updateAllowedGroupsCache(): Promise<void> {
+    try {
+      const stations = await Station.findAll({
+        attributes: ['station_name', 'display_name', 'group_jid'],
+      });
+
+      const newCache = new Set<string>();
+      for (const station of stations) {
+        if (station.group_jid) {
+          newCache.add(station.group_jid.toLowerCase());
+        }
+        if (station.station_name) {
+          newCache.add(station.station_name.toLowerCase());
+        }
+        if (station.display_name) {
+          newCache.add(station.display_name.toLowerCase());
+        }
+      }
+
+      this.allowedGroupsCache = newCache;
+      this.lastCacheUpdate = Date.now();
+      const pumpNames = stations.map(s => s.station_name || s.display_name).filter(Boolean);
+      logger.info(
+        { 
+          pumpCount: stations.length,
+          cachedPumps: pumpNames,
+          cacheKeyCount: this.allowedGroupsCache.size 
+        },
+        'In-memory allowed groups cache updated from database.',
+      );
+    } catch (err: unknown) {
+      logger.error({ err }, 'Failed to load allowed groups cache from database.');
+    }
+  }
 
   /**
    * Processes a normalized message: retrieves group metadata if group message,
@@ -31,30 +80,41 @@ export class MessageHandler implements IMessageHandler {
         }
       }
 
-      // 2. Apply ALLOWED_GROUPS filter if configured (supports case-insensitive partial JID or Group Name matching)
-      if (config.ALLOWED_GROUPS.length > 0) {
-        const isAllowed =
-          message.isGroup &&
-          message.groupJid &&
-          config.ALLOWED_GROUPS.some((allowedName) => {
-            const normalizedAllowed = allowedName.toLowerCase();
-            return (
-              message.groupJid!.toLowerCase().includes(normalizedAllowed) ||
-              groupDisplay.toLowerCase().includes(normalizedAllowed)
-            );
-          });
+      // Lazy load or refresh allowed groups cache if TTL has expired
+      if (this.allowedGroupsCache.size === 0 || Date.now() - this.lastCacheUpdate > this.cacheTTL) {
+        await this.updateAllowedGroupsCache();
+      }
 
-        if (!isAllowed) {
-          logger.debug(
-            { groupJid: message.groupJid, groupName: groupDisplay, messageId: message.id },
-            'Message filtered out: Neither JID nor Name matches any ALLOWED_GROUPS entries.',
+      // 2. Perform fast in-memory allowed filter check
+      const groupNameLower = groupDisplay.toLowerCase();
+      const groupJidLower = message.groupJid?.toLowerCase() || '';
+
+      const isAllowedByDbCache =
+        this.allowedGroupsCache.has(groupJidLower) || this.allowedGroupsCache.has(groupNameLower);
+
+      const allowedGroups = config.ALLOWED_GROUPS;
+      const isAllowedByEnv =
+        allowedGroups.length > 0 &&
+        allowedGroups.some((allowedName) => {
+          const normalizedAllowed = allowedName.toLowerCase();
+          return (
+            groupJidLower.includes(normalizedAllowed) || groupNameLower.includes(normalizedAllowed)
           );
-          return;
-        }
+        });
+
+      const isAllowed = isAllowedByDbCache || isAllowedByEnv || allowedGroups.length === 0;
+
+      if (!isAllowed) {
+        logger.debug(
+          { groupJid: message.groupJid, groupName: groupDisplay, messageId: message.id },
+          'Message filtered out: Group is neither registered in DB nor matches ALLOWED_GROUPS.',
+        );
+        return;
       }
 
       // 3. Match incoming group name against registered stations in the database
       let matchedStationId: string | null = null;
+
       if (message.isGroup && message.groupJid) {
         try {
           const matchedStation = await Station.findOne({
@@ -82,12 +142,10 @@ export class MessageHandler implements IMessageHandler {
                 { stationId: matchedStation.id, groupJid: message.groupJid },
                 'Automatically associated group_jid to station record.',
               );
+
+              // Refresh cache immediately so that it resolves instantly by JID next time
+              await this.updateAllowedGroupsCache();
             }
-          } else {
-            logger.warn(
-              { groupDisplay, groupJid: message.groupJid },
-              'No registered station found matching this WhatsApp group name/JID in the database.',
-            );
           }
         } catch (err: unknown) {
           logger.error({ err }, 'Failed to lookup matching station in database.');
