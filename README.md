@@ -1,144 +1,123 @@
-# WhatsApp Group Listener (Phase 1)
+# WhatsApp Message Mediator
 
-An enterprise-grade, clean-architecture, production-ready WhatsApp Group Listener built with **Node.js (LTS)**, **TypeScript**, and **@whiskeysockets/baileys**.
-
-This application is designed using **SOLID principles**, featuring structured logging via **Pino**, runtime configuration validation via **Zod**, automated reconnection with exponential backoff, and graceful shutdown handling.
+A high-performance background daemon built with Node.js and TypeScript. It connects to WhatsApp, listens to registered CNG pump updates, filters out unrelated chats, and processes status messages in batches using Google Gemini AI to update a PostgreSQL database.
 
 ---
 
-## Architecture Overview
+## 1. System Architecture
 
-The codebase is organized following separation of concerns and dependency injection patterns, making it highly modular and prepared for future scalability (e.g., adding AI parsers, REST APIs, databases, queue mechanisms).
+The mediator processes incoming group messages, filters them instantly in memory, queues them in a database, and resolves updates via an asynchronous AI worker.
+
+```mermaid
+graph TD
+    A[WhatsApp Groups] -->|Incoming Messages| B(WhatsApp Mediator Client)
+    B -->|Fast In-Memory Filtering| C{Matches Station or Env?}
+    C -->|No| D[Ignore Message / Filter Out]
+    C -->|Yes: Save to Queue| E[(PostgreSQL: temp_pending_messages)]
+    
+    F(Queue Worker Loop) -->|Fetch Pending - Max 20| E
+    F -->|Parse Messages| G(Google Gemini Flash)
+    G -->|Return Status & Price JSON| F
+    F -->|Update Status & Note| H[(PostgreSQL: stations)]
+    F -->|Mark status = completed| E
+```
+
+---
+
+## 2. Database Models (Sequelize)
+
+The mediator connects to a shared PostgreSQL database and interacts with the following models:
+
+### `Station` (`stations` table)
+Used by the mediator to read registered pump names/JIDs for filtering, and update current CNG availability.
+*   **`id`** (UUID, Primary Key): Unique identifier of the pump.
+*   **`station_name`** (VARCHAR): Official name of the station.
+*   **`display_name`** (VARCHAR): WhatsApp group name of the pump (used for matching).
+*   **`group_jid`** (VARCHAR, Unique, Nullable): Automatically resolved WhatsApp group JID.
+*   **`is_cng_available`** (BOOLEAN): Current CNG status (open/closed).
+*   **`price`** (DECIMAL): Current CNG price per kg.
+*   **`note`** (TEXT): Verbatim original WhatsApp message text.
+*   **`last_updated`** (TIMESTAMP): Time of the last update.
+
+### `PendingMessage` (`temp_pending_messages` table)
+A queue table synchronized automatically at boot time with `{ alter: true }` to maintain schema integrity.
+*   **`id`** (INTEGER, Primary Key, Auto-Increment)
+*   **`station_id`** (UUID, Nullable): Links the queued message to the matched station.
+*   **`message_id`** (VARCHAR, Unique): Unique message ID used to prevent duplicates.
+*   **`sender_jid` / `sender_name`** (VARCHAR): Information on the sender.
+*   **`group_jid` / `group_name`** (VARCHAR): Source group details.
+*   **`message_text`** (TEXT): Raw message text content.
+*   **`timestamp`** (TIMESTAMP): Time the message was sent on WhatsApp.
+*   **`status`** (VARCHAR, Default 'pending'): Can be `pending`, `completed`, or `failed`.
+
+---
+
+## 3. Directory Layout
 
 ```text
 whatsapp/
-├── session/                  # WhatsApp session authentication credentials
-├── logs/                     # Application logs (app.log)
-├── dist/                     # Compiled JavaScript output
 ├── src/
-│   ├── config/
-│   │   └── index.ts          # Zod environment variable parser/validator
-│   ├── logger/
-│   │   └── index.ts          # Pino logger config (multi-stream console + file)
-│   ├── errors/
-│   │   ├── app-error.ts      # Custom exception classes
-│   │   └── error-handler.ts  # Global, centralized error handling pipeline
-│   ├── types/
-│   │   └── index.ts          # Type & Interface definitions
-│   ├── utils/
-│   │   └── message-normalizer.ts # Normalizes raw Baileys messages
+│   ├── config/             # Config loader, env variables, and Zod schemas
+│   ├── errors/             # Global error handler and custom AppError class
+│   ├── handlers/           # MessageHandler (caching & JID self-healing logic)
+│   ├── logger/             # Pino logger setup (app.log & console logs)
 │   ├── services/
-│   │   └── whatsapp/
-│   │       ├── client.ts     # Baileys Socket lifecycle and reconnection
-│   │       ├── group-cache.ts # In-memory WhatsApp Group subject cache
-│   │       └── listener.ts   # Subscribes to and delegates events
-│   ├── handlers/
-│   │   └── message-handler.ts # Formats and outputs messages
-│   └── index.ts              # Entry point & Process signal listeners
-├── .env.example
-├── tsconfig.json
-├── eslint.config.js
-├── .prettierrc
-└── package.json
+│   │   ├── ai/             # GeminiService (API key verification & structured JSON parser)
+│   │   ├── database/       # Sequelize database service and ORM models
+│   │   ├── queue/          # QueueWorker background polling loop
+│   │   └── whatsapp/       # Baileys client wrapper and event listener
+│   ├── utils/              # Message formatting & normalizers
+│   └── index.ts            # Entrypoint (bootstraps database, cache, and client)
+├── tsconfig.json           # TypeScript configuration rules
+└── package.json            # Node scripts and project dependencies
 ```
 
 ---
 
-## Features
+## 4. Key Workflows & Lifecycle
 
-1. **Robust QR Code Login**: Generates the connection QR code directly inside the terminal on first boot using `qrcode-terminal`.
-2. **Session Persistence**: Stores authentication credentials inside `session/` to bypass QR scanning on restarts.
-3. **Pino Structured Logging**: Multi-destination logging. In development, logs are pretty-printed. In production, logs are printed as raw JSON to stdout. All logs write simultaneously to `logs/app.log`.
-4. **Exponential Reconnection Backoff**: Attempts to reconnect automatically with an exponential backoff time multiplier capped at 60 seconds if a network or server disconnect occurs.
-5. **Group Name API Caching**: Implements an in-memory cache for group titles to prevent heavy, rate-limited requests to the WhatsApp server.
-6. **Graceful Shutdown**: Intercepts `SIGINT` (Ctrl+C) and `SIGTERM` signals to close sockets cleanly and release memory.
-7. **Crash Protection**: Wrapped inside central error-handling middleware ensuring a malformed message or connection issue will never cause a fatal crash.
+### 1. Boot-Up Cache Initialization
+*   Loads all registered pump names, display names, and group JIDs from the `stations` table into an in-memory `allowedGroupsCache` Set.
+*   Ensures that unrelated personal or family chats are ignored instantly at O(1) speed without hitting the database, preserving database pool resources.
 
----
+### 2. WhatsApp Ingestion & JID Self-Healing
+*   When a group message is received, the mediator matches the source group against the cache.
+*   If a match is found based on name, but the station record has `group_jid = NULL` in the database, the mediator automatically updates it with the message's group JID and refreshes the cache.
 
-## Prerequisites
-
-Ensure you have the following installed on your system:
-- **Node.js** (Latest LTS version)
-- **npm** (Comes bundled with Node.js)
+### 3. Background Queue Worker & Gemini AI Parsing
+*   Every 5 seconds, the `QueueWorker` pulls up to 20 pending messages linked to a station.
+*   Submits messages to **Google Gemini 1.5/3.5 Flash** (`gemini-flash-latest`).
+*   Configures `thinkingConfig: { thinkingBudget: 0 }` to disable thinking latency, achieving API responses in < 1.5 seconds.
+*   Updates `is_cng_available`, `price`, `last_updated`, and saves the **exact original message text** into the station's `note` field before marking the queue items as `completed`.
 
 ---
 
-## Installation & Setup
+## 5. Configuration & Setup Guide
 
-1. **Clone the repository** (or navigate to the workspace directory).
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-3. **Configure Environment Variables**:
-   Copy the example environment file:
-   ```bash
-   cp .env.example .env
-   ```
-   Open `.env` and configure your settings:
-   - `NODE_ENV`: Set to `development` or `production`.
-   - `LOG_LEVEL`: Adjust the severity threshold (`info`, `debug`, `error`, `warn`, etc.).
-   - `SESSION_PATH`: Directory where WhatsApp authentication details are saved (default `./session`).
-   - `LOG_PATH`: Directory where logs are saved (default `./logs`).
+### Environment Variables (`.env`)
+Create a `.env` file in the root of the project with:
+```env
+NODE_ENV=development
+LOG_LEVEL=info
+DB_HOST=localhost
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_NAME=cnglive
+DB_PORT=5432
+ALLOWED_GROUPS=            # Optional fallback allowed group list
+GEMINI_API_KEY=AIzaSy...    # Google AI Studio API Key
+QUEUE_POLL_INTERVAL_MS=5000 # Queue polling loop interval (5 seconds)
+```
 
----
+### Installation and Execution
 
-## Scripts
-
-### 1. Development Mode
-Runs the project in real-time using `tsx` (TypeScript Execute) to watch for file modifications and automatically reload:
 ```bash
+# 1. Install dependencies
+npm install
+
+# 2. Build TypeScript
+npm run build
+
+# 3. Run application in development mode
 npm run dev
 ```
-
-### 2. Build for Production
-Compiles TypeScript files into production-ready JavaScript code in the `dist/` directory:
-```bash
-npm run build
-```
-
-### 3. Production Start
-Starts the compiled JavaScript application:
-```bash
-npm start
-```
-
-### 4. Code Formatting
-Applies Prettier rules across all TypeScript source files:
-```bash
-npm run format
-```
-
-### 5. Linting
-Runs ESLint with TypeScript configurations to verify syntax and enforce code quality:
-```bash
-npm run lint
-```
-
----
-
-## Structured Output Format
-
-When a message is received (excluding status updates), it is formatted and printed using the Pino logger:
-
-```text
-------------------------------------------------
-Timestamp : YYYY-MM-DD HH:mm:ss
-Group : [Group Name] or [Private Chat]
-Sender : Sender Pushname (JID)
-Message Type : text / image / sticker / etc.
-Message : [Text content or caption]
-------------------------------------------------
-```
-
----
-
-## Future Extensibility Plan
-
-This architecture is engineered to easily layer on production modules for Phase 2+:
-- **AI Parsing**: Inject a message parser service into `MessageHandler` to forward texts to OpenAI/Claude.
-- **REST APIs**: Integrate Express/NestJS in `src/index.ts` to expose endpoints.
-- **Queue/Workers**: Incorporate BullMQ or Redis to publish messages asynchronously.
-- **Docker**: Simple Dockerfile deployment using multi-stage builds.
-- **Observability**: Expose Prometheus metrics or OpenTelemetry instrumentation through the socket connection.
