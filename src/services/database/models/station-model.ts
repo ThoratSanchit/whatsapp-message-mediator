@@ -16,6 +16,7 @@ export class Station extends Model {
   declare note: string | null;
   declare last_updated: Date | null;
   declare created_by: string | null;
+  declare is_verified: boolean;
   declare readonly created_at: Date;
   declare readonly updated_at: Date;
 }
@@ -86,6 +87,11 @@ export function initStationModel(sequelize: Sequelize): void {
       created_by: {
         type: DataTypes.UUID,
         allowNull: true,
+      },
+      is_verified: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
       },
     },
     {

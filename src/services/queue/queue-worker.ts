@@ -24,11 +24,13 @@ export class QueueWorker {
 
     const intervalMs = config.QUEUE_POLL_INTERVAL_MS;
     logger.info({ intervalMs }, 'Starting background QueueWorker loop...');
-    
+
     // Verify Gemini API key connectivity asynchronously at startup
     this.geminiService.verifyApiKey().then((isValid) => {
       if (!isValid) {
-        logger.error('⚠️ Gemini QueueWorker started but API key validation failed. Please check your GEMINI_API_KEY.');
+        logger.error(
+          '⚠️ Gemini QueueWorker started but API key validation failed. Please check your GEMINI_API_KEY.',
+        );
       }
     });
 
