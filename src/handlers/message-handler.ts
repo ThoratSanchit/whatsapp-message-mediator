@@ -67,6 +67,10 @@ export class MessageHandler implements IMessageHandler {
   private getSimilarity(s1: string, s2: string): number {
     const norm1 = this.normalizeString(s1);
     const norm2 = this.normalizeString(s2);
+    // If the strings are very short (<= 6 chars), require exact match to prevent false matches
+    if (norm1.length <= 6 || norm2.length <= 6) {
+      return norm1 === norm2 ? 1.0 : 0.0;
+    }
     const len = Math.max(norm1.length, norm2.length);
     if (len === 0) return 1.0;
     const dist = this.getLevenshteinDistance(norm1, norm2);
@@ -193,17 +197,24 @@ export class MessageHandler implements IMessageHandler {
             const allStations = await Station.findAll();
             const normalizedIncoming = this.normalizeString(groupDisplay);
 
+            // 1. Prioritize exact match first
             matchedStation =
               allStations.find((s) => {
                 const nameNorm = s.station_name ? this.normalizeString(s.station_name) : '';
                 const dispNorm = s.whatsapp_group_name ? this.normalizeString(s.whatsapp_group_name) : '';
-                return (
-                  nameNorm === normalizedIncoming ||
-                  dispNorm === normalizedIncoming ||
-                  this.getSimilarity(groupDisplay, s.station_name || '') >= 0.8 ||
-                  this.getSimilarity(groupDisplay, s.whatsapp_group_name || '') >= 0.8
-                );
+                return nameNorm === normalizedIncoming || dispNorm === normalizedIncoming;
               }) || null;
+
+            // 2. Fall back to similarity match only if exact match is not found
+            if (!matchedStation) {
+              matchedStation =
+                allStations.find((s) => {
+                  return (
+                    this.getSimilarity(groupDisplay, s.station_name || '') >= 0.8 ||
+                    this.getSimilarity(groupDisplay, s.whatsapp_group_name || '') >= 0.8
+                  );
+                }) || null;
+            }
           }
 
           if (matchedStation) {
