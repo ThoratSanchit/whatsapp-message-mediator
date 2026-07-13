@@ -1,4 +1,4 @@
-import { WASocket, proto } from '@whiskeysockets/baileys';
+import { WASocket, proto, downloadMediaMessage } from '@whiskeysockets/baileys';
 import { logger } from '../../logger/index.js';
 import { normalizeMessage } from '../../utils/message-normalizer.js';
 import { IMessageHandler } from '../../types/index.js';
@@ -36,6 +36,36 @@ export class WhatsAppListener {
             if (!normalized) {
               // Message was ignored (e.g. status broadcast or missing IDs)
               continue;
+            }
+
+            // If the message is an image or a sticker, download it
+            if (normalized.messageType === 'image' || normalized.messageType === 'sticker') {
+              try {
+                logger.info(
+                  { messageId: normalized.id, type: normalized.messageType },
+                  'Downloading media from WhatsApp...',
+                );
+                const buffer = await downloadMediaMessage(
+                  rawMessage as any,
+                  'buffer',
+                  {},
+                  {
+                    logger: logger as any,
+                    reuploadRequest: sock.updateMediaMessage,
+                  },
+                );
+                normalized.mediaBase64 = buffer.toString('base64');
+                normalized.mediaMime = normalized.messageType === 'sticker' ? 'image/webp' : 'image/jpeg';
+                logger.info(
+                  { messageId: normalized.id, sizeBytes: buffer.length },
+                  'Successfully downloaded media from WhatsApp.',
+                );
+              } catch (mediaErr) {
+                logger.error(
+                  { mediaErr, messageId: normalized.id, type: normalized.messageType },
+                  'Failed to download media.',
+                );
+              }
             }
 
             // Process the normalized message

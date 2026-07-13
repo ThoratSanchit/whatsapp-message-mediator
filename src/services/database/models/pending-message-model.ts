@@ -11,6 +11,8 @@ export class PendingMessage extends Model {
   declare message_text: string;
   declare timestamp: Date;
   declare status: string;
+  declare media_base64: string | null;
+  declare media_mime: string | null;
   declare readonly created_on: Date;
   declare readonly updated_on: Date;
 }
@@ -60,6 +62,14 @@ export function initPendingMessageModel(sequelize: Sequelize): void {
         type: DataTypes.STRING,
         allowNull: false,
         defaultValue: 'pending',
+      },
+      media_base64: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      media_mime: {
+        type: DataTypes.STRING,
+        allowNull: true,
       },
     },
     {

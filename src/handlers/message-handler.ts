@@ -25,12 +25,22 @@ export class MessageHandler implements IMessageHandler {
   }
 
   /**
+   * Normalizes a string by converting it to lowercase, replacing punctuation and spaces with a single space, and trimming.
+   */
+  private normalizeString(str: string): string {
+    return str
+      .toLowerCase()
+      .replace(/[.,\-_:()\s]+/g, ' ')
+      .trim();
+  }
+
+  /**
    * Updates the in-memory cache of allowed group names and JIDs from the stations table.
    */
   private async updateAllowedGroupsCache(): Promise<void> {
     try {
       const stations = await Station.findAll({
-        attributes: ['station_name', 'display_name', 'group_jid'],
+        attributes: ['station_name', 'whatsapp_group_name', 'group_jid'],
       });
 
       const newCache = new Set<string>();
@@ -39,16 +49,20 @@ export class MessageHandler implements IMessageHandler {
           newCache.add(station.group_jid.toLowerCase());
         }
         if (station.station_name) {
-          newCache.add(station.station_name.toLowerCase());
+          const name = station.station_name.toLowerCase().trim();
+          newCache.add(name);
+          newCache.add(this.normalizeString(name));
         }
-        if (station.display_name) {
-          newCache.add(station.display_name.toLowerCase());
+        if (station.whatsapp_group_name) {
+          const disp = station.whatsapp_group_name.toLowerCase().trim();
+          newCache.add(disp);
+          newCache.add(this.normalizeString(disp));
         }
       }
 
       this.allowedGroupsCache = newCache;
       this.lastCacheUpdate = Date.now();
-      const pumpNames = stations.map((s) => s.station_name || s.display_name).filter(Boolean);
+      const pumpNames = stations.map((s) => s.station_name || s.whatsapp_group_name).filter(Boolean);
       logger.info(
         {
           pumpCount: stations.length,
@@ -87,10 +101,13 @@ export class MessageHandler implements IMessageHandler {
 
       // 2. Perform fast in-memory allowed filter check
       const groupNameLower = groupDisplay.toLowerCase();
+      const groupNameNormalized = this.normalizeString(groupDisplay);
       const groupJidLower = message.groupJid?.toLowerCase() || '';
 
       const isAllowedByDbCache =
-        this.allowedGroupsCache.has(groupJidLower) || this.allowedGroupsCache.has(groupNameLower);
+        this.allowedGroupsCache.has(groupJidLower) ||
+        this.allowedGroupsCache.has(groupNameLower) ||
+        this.allowedGroupsCache.has(groupNameNormalized);
 
       const allowedGroups = config.ALLOWED_GROUPS;
       const isAllowedByEnv =
@@ -117,15 +134,21 @@ export class MessageHandler implements IMessageHandler {
 
       if (message.isGroup && message.groupJid) {
         try {
-          const matchedStation = await Station.findOne({
-            where: {
-              [Op.or]: [
-                { group_jid: message.groupJid },
-                { station_name: groupDisplay },
-                { display_name: groupDisplay },
-              ],
-            },
+          let matchedStation = await Station.findOne({
+            where: { group_jid: message.groupJid },
           });
+
+          if (!matchedStation) {
+            const allStations = await Station.findAll();
+            const normalizedIncoming = this.normalizeString(groupDisplay);
+
+            matchedStation =
+              allStations.find((s) => {
+                const nameNorm = s.station_name ? this.normalizeString(s.station_name) : '';
+                const dispNorm = s.whatsapp_group_name ? this.normalizeString(s.whatsapp_group_name) : '';
+                return nameNorm === normalizedIncoming || dispNorm === normalizedIncoming;
+              }) || null;
+          }
 
           if (matchedStation) {
             matchedStationId = matchedStation.id;
@@ -164,6 +187,8 @@ export class MessageHandler implements IMessageHandler {
           message_text: message.content,
           timestamp: message.timestamp,
           status: 'pending',
+          media_base64: message.mediaBase64 || null,
+          media_mime: message.mediaMime || null,
         },
       });
       logger.debug(

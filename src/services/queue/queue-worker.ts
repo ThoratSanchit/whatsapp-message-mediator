@@ -83,6 +83,8 @@ export class QueueWorker {
         .map((m) => ({
           message_id: m.message_id,
           text: m.message_text,
+          media_base64: m.media_base64,
+          media_mime: m.media_mime,
         }));
 
       // If we have messages to parse via AI

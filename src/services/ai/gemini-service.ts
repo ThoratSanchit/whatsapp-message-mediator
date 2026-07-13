@@ -49,25 +49,52 @@ export class GeminiService {
    * using a strictly enforced JSON schema output.
    */
   public async parseMessages(
-    messages: Array<{ message_id: string; text: string }>,
+    messages: Array<{
+      message_id: string;
+      text: string;
+      media_base64?: string | null;
+      media_mime?: string | null;
+    }>,
   ): Promise<GeminiParsedMessage[]> {
     if (messages.length === 0) return [];
 
     logger.debug({ count: messages.length }, 'Sending batch of messages to Gemini for parsing.');
 
-    // Construct the user input containing all messages
-    const messageListStr = messages
-      .map((m) => `[ID: ${m.message_id}] Message: "${m.text}"`)
-      .join('\n');
+    // Construct the user input containing all messages and image references
+    const contents: any[] = [];
+    let textPrompt = 'Analyze the following messages and any attached images to extract CNG status:\n\n';
+
+    for (const m of messages) {
+      textPrompt += `[ID: ${m.message_id}] `;
+      if (m.media_base64 && m.media_mime) {
+        textPrompt += `Attached Image (see corresponding image part below). `;
+      }
+      textPrompt += `Text Content: "${m.text || ''}"\n`;
+    }
+
+    contents.push(textPrompt);
+
+    // Append the base64 media parts labeled with their message ID
+    for (const m of messages) {
+      if (m.media_base64 && m.media_mime) {
+        contents.push(`\nImage for [ID: ${m.message_id}]:`);
+        contents.push({
+          inlineData: {
+            mimeType: m.media_mime,
+            data: m.media_base64,
+          },
+        });
+      }
+    }
 
     const systemInstruction = `
-You are an expert assistant designed to parse CNG fuel availability updates from WhatsApp group messages.
-The messages are written in a mix of Marathi, Hindi, and English (often in Latin script, e.g. Hinglish or Marathinglish).
+You are an expert assistant designed to parse CNG fuel availability updates from WhatsApp group messages and attached status images.
+The messages and images are written in a mix of Marathi, Hindi, and English (often in Latin script, e.g. Hinglish or Marathinglish).
 
-For each message in the input list, analyze the text and extract:
-1. "is_cng_available": Set to true if the message indicates CNG gas is currently available/running/started. Set to false if it indicates CNG is closed/empty/no gas/no light/stopped. If not mentioned or unclear, assume true if price is mentioned, or false if it clearly says closed/no-light/bnd.
+For each message in the input list, analyze the text and any attached images labeled with the same ID, and extract:
+1. "is_cng_available": Set to true if the message or image indicates CNG gas is currently available/running/started. Set to false if it indicates CNG is closed/empty/no gas/no light/stopped/bnd.
 2. "price": Extract the price of CNG as a number (e.g. 89.5, 90). If no price is mentioned, return null.
-3. "note": A short note summarizing any queue length details, waiting time, or reason for closure mentioned in the text (e.g. "queue of 10 cars", "closed due to power cut", "no queue"). If no extra detail is mentioned, return null.
+3. "note": A short note summarizing any queue length details, waiting time, or reason for closure mentioned in the text or image (e.g. "queue of 10 cars", "cng closed until vehicle arrives", "no queue"). If no extra detail is mentioned, return null.
 
 You MUST map each output back to the original message's unique "message_id".
 `;
@@ -104,7 +131,7 @@ You MUST map each output back to the original message's unique "message_id".
     try {
       const response = await this.ai.models.generateContent({
         model: this.modelName,
-        contents: messageListStr,
+        contents: contents,
         config: {
           systemInstruction,
           responseMimeType: 'application/json',

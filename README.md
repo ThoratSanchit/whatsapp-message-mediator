@@ -32,7 +32,7 @@ The mediator connects to a shared PostgreSQL database and interacts with the fol
 Used by the mediator to read registered pump names/JIDs for filtering, and update current CNG availability.
 *   **`id`** (UUID, Primary Key): Unique identifier of the pump.
 *   **`station_name`** (VARCHAR): Official name of the station.
-*   **`display_name`** (VARCHAR): WhatsApp group name of the pump (used for matching).
+*   **`whatsapp_group_name`** (VARCHAR): WhatsApp group name of the pump (used for matching).
 *   **`group_jid`** (VARCHAR, Unique, Nullable): Automatically resolved WhatsApp group JID.
 *   **`is_cng_available`** (BOOLEAN): Current CNG status (open/closed).
 *   **`price`** (DECIMAL): Current CNG price per kg.

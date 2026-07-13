@@ -8,6 +8,8 @@ export interface NormalizedMessage {
   groupJid: string | null;
   messageType: string;
   content: string;
+  mediaBase64?: string | null;
+  mediaMime?: string | null;
 }
 
 export interface IMessageHandler {

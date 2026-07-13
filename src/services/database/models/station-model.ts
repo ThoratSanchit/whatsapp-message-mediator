@@ -3,7 +3,7 @@ import { DataTypes, Model, Sequelize } from 'sequelize';
 export class Station extends Model {
   declare id: string;
   declare station_name: string;
-  declare display_name: string | null;
+  declare whatsapp_group_name: string | null;
   declare group_jid: string | null;
   declare owner_name: string | null;
   declare contact_number: string | null;
@@ -33,7 +33,7 @@ export function initStationModel(sequelize: Sequelize): void {
         type: DataTypes.STRING,
         allowNull: false,
       },
-      display_name: {
+      whatsapp_group_name: {
         type: DataTypes.STRING,
         allowNull: true,
       },
