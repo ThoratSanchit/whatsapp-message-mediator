@@ -97,6 +97,17 @@ export class QueueWorker {
           if (!messageRecord || !messageRecord.station_id) continue;
 
           try {
+            // If the message is not a relevant CNG update (e.g. greeting or irrelevant chat),
+            // skip updating the station record but mark the message as completed.
+            if (!result.is_cng_update) {
+              logger.info(
+                { messageId: messageRecord.message_id, text: messageRecord.message_text },
+                'Message is not a CNG update (e.g. greeting/chat). Skipped updating station.',
+              );
+              await messageRecord.update({ status: 'completed' });
+              continue;
+            }
+
             // Update corresponding station status
             const station = await Station.findByPk(messageRecord.station_id);
             if (station) {

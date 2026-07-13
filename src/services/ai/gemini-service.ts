@@ -4,6 +4,7 @@ import { logger } from '../../logger/index.js';
 
 export interface GeminiParsedMessage {
   message_id: string;
+  is_cng_update: boolean;
   is_cng_available: boolean;
   price: number | null;
   note: string | null;
@@ -11,7 +12,7 @@ export interface GeminiParsedMessage {
 
 export class GeminiService {
   private ai: GoogleGenAI;
-  private modelName = 'gemini-flash-latest';
+  private modelName = 'gemini-1.5-flash';
 
   constructor() {
     this.ai = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY });
@@ -92,9 +93,10 @@ You are an expert assistant designed to parse CNG fuel availability updates from
 The messages and images are written in a mix of Marathi, Hindi, and English (often in Latin script, e.g. Hinglish or Marathinglish).
 
 For each message in the input list, analyze the text and any attached images labeled with the same ID, and extract:
-1. "is_cng_available": Set to true if the message or image indicates CNG gas is currently available/running/started. Set to false if it indicates CNG is closed/empty/no gas/no light/stopped/bnd.
-2. "price": Extract the price of CNG as a number (e.g. 89.5, 90). If no price is mentioned, return null.
-3. "note": A short note summarizing any queue length details, waiting time, or reason for closure mentioned in the text or image (e.g. "queue of 10 cars", "cng closed until vehicle arrives", "no queue"). If no extra detail is mentioned, return null.
+1. "is_cng_update": Set to true if the message or image contains a relevant update about CNG availability status, price, queues, pressure, or closure/opening times. Set to false if it is an unrelated message (e.g., greetings like "Good morning", general chat, questions like "is CNG open?", or emoji/sticker reactions without status text).
+2. "is_cng_available": Set to true if the message or image indicates CNG gas is currently available/running/started. Set to false if it indicates CNG is closed/empty/no gas/no light/stopped/bnd.
+3. "price": Extract the price of CNG as a number (e.g. 89.5, 90). If no price is mentioned, return null.
+4. "note": A short note summarizing any queue length details, waiting time, or reason for closure mentioned in the text or image (e.g. "queue of 10 cars", "cng closed until vehicle arrives", "no queue"). If no extra detail is mentioned, return null.
 
 You MUST map each output back to the original message's unique "message_id".
 `;
@@ -110,6 +112,10 @@ You MUST map each output back to the original message's unique "message_id".
             type: Type.STRING,
             description: 'The unique message ID from the input',
           },
+          is_cng_update: {
+            type: Type.BOOLEAN,
+            description: 'True if the message contains a relevant CNG status update, false if general chat or greeting',
+          },
           is_cng_available: {
             type: Type.BOOLEAN,
             description: 'True if CNG is currently available/open, false if closed/out of stock',
@@ -124,7 +130,7 @@ You MUST map each output back to the original message's unique "message_id".
               'Short status note about queue size, waiting time, or reason for closure, or null if not specified',
           },
         },
-        required: ['message_id', 'is_cng_available'],
+        required: ['message_id', 'is_cng_update', 'is_cng_available'],
       },
     };
 
