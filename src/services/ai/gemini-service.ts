@@ -12,7 +12,7 @@ export interface GeminiParsedMessage {
 
 export class GeminiService {
   private ai: GoogleGenAI;
-  private modelName = 'gemini-1.5-flash';
+  private modelName = 'gemini-flash-lite-latest';
 
   constructor() {
     this.ai = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY });
@@ -26,11 +26,6 @@ export class GeminiService {
       const response = await this.ai.models.generateContent({
         model: this.modelName,
         contents: 'Say OK',
-        config: {
-          thinkingConfig: {
-            thinkingBudget: 0,
-          },
-        },
       });
       if (response.text?.trim().includes('OK')) {
         logger.info('✅ Google Gemini API Connection Verified Successfully! API Key is valid.');
@@ -143,9 +138,6 @@ You MUST map each output back to the original message's unique "message_id".
           responseMimeType: 'application/json',
           responseSchema: responseSchema,
           temperature: 0.1, // Low temperature for deterministic output matching schema
-          thinkingConfig: {
-            thinkingBudget: 0, // Disable thinking for fast responses
-          },
         },
       });
 
