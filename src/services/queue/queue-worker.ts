@@ -111,10 +111,17 @@ export class QueueWorker {
             // Update corresponding station status
             const station = await Station.findByPk(messageRecord.station_id);
             if (station) {
+              const isMediaPlaceholder =
+                messageRecord.message_text === '[Image]' ||
+                messageRecord.message_text === '[Sticker]';
+              const stationNote = isMediaPlaceholder
+                ? (result.note || messageRecord.message_text)
+                : messageRecord.message_text;
+
               await station.update({
                 is_cng_available: result.is_cng_available,
                 price: result.price,
-                note: messageRecord.message_text,
+                note: stationNote,
                 last_updated: new Date(),
               });
               logger.info(
