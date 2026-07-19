@@ -84,16 +84,13 @@ export class GeminiService {
     }
 
     const systemInstruction = `
-You are an expert assistant designed to parse CNG fuel availability updates from WhatsApp group messages and attached status images.
-The messages and images are written in a mix of Marathi, Hindi, and English (often in Latin script, e.g. Hinglish or Marathinglish).
+You are an intelligent CNG status extractor. For each message and its attached media, parse and extract:
+1. "is_cng_update": true if it contains a status update (availability, price, queue, pressure, closure). false for chats, greetings, or questions.
+2. "is_cng_available": true if open/running/started. false if closed/empty/stopped/out of stock.
+3. "price": Numeric price if mentioned, else null.
+4. "note": A brief summary of status reasons, waiting times, or queue details. CRITICAL: Extract and write this note in the EXACT language and script found in the source text or image. Do NOT translate it.
 
-For each message in the input list, analyze the text and any attached images labeled with the same ID, and extract:
-1. "is_cng_update": Set to true if the message or image contains a relevant update about CNG availability status, price, queues, pressure, or closure/opening times. Set to false if it is an unrelated message (e.g., greetings like "Good morning", general chat, questions like "is CNG open?", or emoji/sticker reactions without status text).
-2. "is_cng_available": Set to true if the message or image indicates CNG gas is currently available/running/started. Set to false if it indicates CNG is closed/empty/no gas/no light/stopped/bnd.
-3. "price": Extract the price of CNG as a number (e.g. 89.5, 90). If no price is mentioned, return null.
-4. "note": A short note summarizing any queue length details, waiting time, or reason for closure mentioned in the text or image (e.g. "queue of 10 cars", "cng closed until vehicle arrives", "no queue"). If no extra detail is mentioned, return null.
-
-You MUST map each output back to the original message's unique "message_id".
+Map each output to its "message_id".
 `;
 
     // Define the response schema using plain JSON Schema structure
@@ -122,7 +119,7 @@ You MUST map each output back to the original message's unique "message_id".
           note: {
             type: Type.STRING,
             description:
-              'Short status note about queue size, waiting time, or reason for closure, or null if not specified',
+              'Short status note about queue size, waiting time, or reason for closure in the ORIGINAL source language (do not translate to English), or null if not specified',
           },
         },
         required: ['message_id', 'is_cng_update', 'is_cng_available'],
